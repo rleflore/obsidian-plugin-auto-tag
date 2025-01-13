@@ -1,9 +1,9 @@
 {
 	"id": "auto-tag",
 	"name": "Auto Tag",
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"minAppVersion": "0.15.0",
-	"description": "Easily generate relevant tags for your Obsidian notes or selected text.",
+	"description": "Easily generate relevant tags for your Obsidian notes or selected text. This is the test for similar tags",
 	"author": "Control Alt",
 	"authorUrl": "https://control-alt.dev/",
 	"isDesktopOnly": false
