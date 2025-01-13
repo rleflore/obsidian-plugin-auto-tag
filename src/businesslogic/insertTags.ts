@@ -6,101 +6,99 @@ import {getTagSuggestions} from "src/services/openai.api";
 import {createDocumentFragment, customCaseConversion} from "src/utils/utils";
 import {kebabCase, camelCase, pascalCase, snakeCase, constantCase, pascalSnakeCase, trainCase} from "change-case";
 import Logger from "../plugin/Logger";
-
+import { findSimilarTag } from "src/businesslogic/findSimilarTag";
+import { getKnownTags } from "src/businesslogic/knownTags";
+import { presentTagOptions } from "src/plugin/modals/presentTagOptions";
 // Several combinations:
 // - insert demo tags or real tags (real -> fetch them first)
 // - insert in frontmatter or after the selected text
 
-const getAutoTags = async (inputText: string, settings: AutoTagPluginSettings) => {
-	let autotags: string[];
-	if (settings.demoMode) {
-		// timeout to mimic API call
-		await new Promise(resolve => setTimeout(resolve, 2000));
+const getAutoTags = async (inputText: string, settings: AutoTagPluginSettings, app: any) => {
+    let autotags: string[];
+    if (settings.demoMode) {
+        // timeout to mimic API call
+        await new Promise(resolve => setTimeout(resolve, 2000));
 
-		autotags = [
-			// English
-			"Healthy and Tasty",
-			// French
-			"Cuisine Facile",
-			// Chinese
-			"健康美味",
-			// Japanese
-			"健康的な美味しい",
-			// Korean
-			"건강하고 맛있는",
-			// Arabic
-			"طعام صحي",
-			// Russian
-			"Здоровая еда",
-			// Hindi
-			"स्वास्थ्यकर और स्वादिष्ट",
-			// Thai
-			"อาหารที่ดีต่อสุขภาพ",
-			// Portuguese
-			"Comida Saudável"
-		];
-	} else if (settings.openaiApiKey.length > 0) {
-		// Remove the frontmatter from the document; should not be taken into account for tag generation.
-		let mainInputText;
-		try {
-			const YAMLFrontMatter = /---\s*[\s\S]*?\s*---/g;
-			mainInputText = inputText.replace(YAMLFrontMatter, "");
-		} catch (err) {
-			await Logger.error("Error removing frontmatter from message", err);
-			throw new Error("Error removing frontmatter from message" + err);
-		}
+        autotags = [
+            // predefined tags
+        ];
+    } else if (settings.openaiApiKey.length > 0) {
+        // Remove the frontmatter from the document
+        let mainInputText;
+        try {
+            const YAMLFrontMatter = /---\s*[\s\S]*?\s*---/g;
+            mainInputText = inputText.replace(YAMLFrontMatter, "");
+        } catch (err) {
+            await Logger.error("Error removing frontmatter from message", err);
+            throw new Error("Error removing frontmatter from message" + err);
+        }
 
-		autotags = await getTagSuggestions(settings, mainInputText, settings.openaiApiKey) || [];
-	} else {
-		const notice = createDocumentFragment(`<strong>Auto Tag plugin</strong><br>Error: OpenAI API key is missing. Please add it in the plugin settings.`);
-		new Notice(notice);
-		return [];
-	}
+        autotags = await getTagSuggestions(settings, mainInputText, settings.openaiApiKey) || [];
+    } else {
+        const notice = createDocumentFragment(`<strong>Auto Tag plugin</strong><br>Error: OpenAI API key is missing. Please add it in the plugin settings.`);
+        new Notice(notice);
+        return [];
+    }
 
-	try {
-		// Avoid empty tags
-		autotags = autotags.filter((tag) => tag.length > 0);
+    try {
+        // Avoid empty tags
+        autotags = autotags.filter((tag) => tag.length > 0);
 
-		// Apply tag formatting preference
-		autotags = autotags.map((tag) => {
-			// Check if tag contains any characters outside of the Basic Latin and Latin-1 Supplement blocks
-			const notLatin = /[^\u0020-\u007F\u0080-\u00FF\u0100-\u017F\u0180-\u024F]/.test(tag);
+        // Apply tag formatting preference
+        autotags = autotags.map((tag) => {
+            // Check if tag contains any characters outside of the Basic Latin and Latin-1 Supplement blocks
+            const notLatin = /[^\u0020-\u007F\u0080-\u00FF\u0100-\u017F\u0180-\u024F]/.test(tag);
 
-			if (notLatin) {
-				return customCaseConversion(tag, settings.tagsFormat);
-			}
+            if (notLatin) {
+                return customCaseConversion(tag, settings.tagsFormat);
+            }
 
-			switch (settings.tagsFormat) {
-				case "kebabCase":
-					return kebabCase(tag);
-				case "snakeCase":
-					return snakeCase(tag);
-				case "pascalCase":
-					return pascalCase(tag);
-				case "camelCase":
-					return camelCase(tag);
-				case "constantCase":
-					return constantCase(tag);
-				case "pascalSnakeCase":
-					return pascalSnakeCase(tag);
-				case "trainCase":
-					return trainCase(tag);
-				default:
-					return kebabCase(tag);
-			}
-		});
-	} catch (error) {
-		AutoTagPlugin.Logger.error(error);
-		const notice = createDocumentFragment(`<strong>Auto Tag plugin</strong><br>Error sanitizing tags: {{errorMessage}}`, {errorMessage: error.message});
-		new Notice(notice);
-	}
+            switch (settings.tagsFormat) {
+                case "kebabCase":
+                    return kebabCase(tag);
+                case "snakeCase":
+                    return snakeCase(tag);
+                case "pascalCase":
+                    return pascalCase(tag);
+                case "camelCase":
+                    return camelCase(tag);
+                case "constantCase":
+                    return constantCase(tag);
+                case "pascalSnakeCase":
+                    return pascalSnakeCase(tag);
+                case "trainCase":
+                    return trainCase(tag);
+                default:
+                    return kebabCase(tag);
+            }
+        });
 
-	if (settings.useAutotagPrefix) {
-		autotags = autotags.map(tag => `autotag/${tag}`);
-	}
+        // Get known tags
+        const knownTags = await getKnownTags(app);
 
-	return autotags;
+        // Check for similar tags and store suggestions
+        const tagSuggestions = await Promise.all(autotags.map(async (tag) => {
+            const similarTag = await findSimilarTag(tag, knownTags);
+            return { originalTag: tag, similarTag: similarTag || tag };
+        }));
+
+        // Present options to the user
+		const selectedTags = await presentTagOptions(app, tagSuggestions, knownTags);
+
+        autotags = selectedTags.map((tag: { originalTag: string; selectedTag: string }) => tag.selectedTag);
+    } catch (error) {
+        AutoTagPlugin.Logger.error(error);
+        const notice = createDocumentFragment(`<strong>Auto Tag plugin</strong><br>Error sanitizing tags: {{errorMessage}}`, {errorMessage: error.message});
+        new Notice(notice);
+    }
+
+    if (settings.useAutotagPrefix) {
+        autotags = autotags.map(tag => `autotag/${tag}`);
+    }
+
+    return autotags;
 };
+
 
 /**
  * Inserts or updates the "tags" field in the frontmatter of a document.
@@ -202,7 +200,7 @@ export const commandFnInsertTagsForSelectedText = async (editor: Editor, view: M
 	}
 
 	if (settings.showPreUpdateDialog) {
-		const fetchTagsFunction = () => getAutoTags(selectedText, settings);
+		const fetchTagsFunction = () => getAutoTags(selectedText, settings, view.app);
 
 		const onAccept = async (acceptedTags: string[]) => {
 			AutoTagPlugin.Logger.debug("Tags accepted for insertion:", acceptedTags);
@@ -217,12 +215,12 @@ export const commandFnInsertTagsForSelectedText = async (editor: Editor, view: M
 			AutoTagPlugin.Logger.debug("Tags insertion cancelled by user.");
 		}
 
-		new PreUpdateModal(app, settings, fetchTagsFunction, onAccept, onCancel).open();
+		new PreUpdateModal(view.app, settings, fetchTagsFunction, onAccept, onCancel).open();
 	} else {
 		/**
 		 * Retrieve tag suggestions.
 		 */
-		const suggestedTags = await getAutoTags(selectedText, settings) || [];
+		const suggestedTags = await getAutoTags(selectedText, settings, view.app) || [];
 
 		/**
 		 * Insert the tags in the note right away.
